@@ -7,7 +7,7 @@ const COINGECKO_API_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bit
  * Fetches the current gold and silver prices from the Phu Quy API
  * and inserts them into the Supabase database.
  */
-async function fetchAndSavePrices() {
+async function fetchAndSaveOrUpdatePrices() {
   try {
     const response = await fetch(API_URL);
     if (!response.ok) {
@@ -25,23 +25,27 @@ async function fetchAndSavePrices() {
       price_change_percent: item.priceChangePercent,
       unit_name: item.unit_name,
       price_source: API_URL,
-      brand_id: null,           // nullable FK - set later if brands table is populated
+      brand_id: 1,           // nullable FK - set later if brands table is populated
       updated_at: new Date().toISOString()
     }));
 
+    let updatedRows = [];
     const { data, error } = await supabase
       .from('asset_prices')
-      .insert(rowsToInsert)
+      .upsert(
+        rowsToInsert.map(row => ({ ...row, brand_id: 1 })),
+        { onConflict: 'brand_id, name' } // Trùng 2 trường này thì tự động Update
+      )
       .select();
 
-    if (error) {
-      throw error;
+    if (!error && data) {
+      updatedRows.push(...data);
     }
 
-    console.log(`[${new Date().toISOString()}] Successfully saved ${rowsToInsert.length} price records to Supabase.`);
-    return data;
+    console.log(`[${new Date().toISOString()}] Successfully saved ${updatedRows.length} price records to Supabase.`);
+    return updatedRows;
   } catch (error) {
-    console.error('Error in fetchAndSavePrices:', error.message);
+    console.error('Error in fetchAndSaveOrUpdatePrices:', error.message);
     throw error;
   }
 }
@@ -54,8 +58,7 @@ async function getLatestPrices() {
     const { data, error } = await supabase
       .from('asset_prices')
       .select('*')
-      .order('created_at', { ascending: false })
-      .limit(3);
+      .eq('name', 'Bạc PQ');
 
     if (error) {
       throw error;
@@ -143,7 +146,7 @@ async function getLatestCryptoPrices() {
 }
 
 module.exports = {
-  fetchAndSavePrices,
+  fetchAndSaveOrUpdatePrices,
   getLatestPrices,
   fetchAndSaveCryptoPrices,
   getLatestCryptoPrices

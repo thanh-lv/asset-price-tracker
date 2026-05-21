@@ -20,7 +20,9 @@
   "homepage": "https://github.com/thanh-lv/asset-price-tracker#readme",
   "dependencies": {
     "@supabase/supabase-js": "^2.106.0",
+    "cors": "^2.8.6",
     "dotenv": "^17.4.2",
+    "express": "^5.2.1",
     "telegraf": "^4.16.3"
   }
 }
