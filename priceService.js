@@ -1,7 +1,7 @@
 const { supabase } = require('./supabaseClient');
 
 const API_URL = process.env.PHUQUY_API_URL || 'https://be.phuquy.com.vn/jewelry/product-payment-service/api/products/get-price';
-const COINGECKO_API_URL = 'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin,ethereum&vs_currencies=usd,vnd';
+const COIN_MARKET_CAP_API_URL = 'https://pro-api.coinmarketcap.com/v1/simple/price?ids=';
 
 /**
  * Fetches the current gold and silver prices from the Phu Quy API
@@ -29,20 +29,54 @@ async function fetchAndSaveOrUpdatePrices() {
       updated_at: new Date().toISOString()
     }));
 
-    let updatedRows = [];
-    const { data, error } = await supabase
+    // Lấy dữ liệu hiện tại từ database để so sánh
+    const { data: existingPrices, error: fetchError } = await supabase
       .from('asset_prices')
-      .upsert(
-        rowsToInsert.map(row => ({ ...row, brand_id: 1 })),
-        { onConflict: 'brand_id, name' } // Trùng 2 trường này thì tự động Update
-      )
-      .select();
+      .select('name, buy_price, sell_price')
+      .eq('brand_id', 1);
 
-    if (!error && data) {
-      updatedRows.push(...data);
+    if (fetchError) {
+      console.warn('Could not fetch existing prices, will attempt to upsert all:', fetchError.message);
     }
 
-    console.log(`[${new Date().toISOString()}] Successfully saved ${updatedRows.length} price records to Supabase.`);
+    // Chỉ lấy ra những bản ghi mới hoặc có sự thay đổi về giá
+    const rowsToUpsert = rowsToInsert.filter(row => {
+      if (!existingPrices) return true;
+      const existing = existingPrices.find(e => e.name === row.name);
+      // Trả về true nếu chưa có trong DB, hoặc giá mua/bán thay đổi
+      return !existing || existing.buy_price !== row.buy_price || existing.sell_price !== row.sell_price;
+    });
+
+    let updatedRows = [];
+
+    // Cập nhật hoặc thêm mới từng dòng dựa trên việc nó đã tồn tại trong DB chưa
+    if (rowsToUpsert.length > 0) {
+      for (const row of rowsToUpsert) {
+        // Kiểm tra xem bản ghi đã có trong existingPrices hay chưa
+        const isExisting = existingPrices && existingPrices.some(e => e.name === row.name);
+
+        let query = supabase.from('asset_prices');
+        if (isExisting) {
+          // Nếu đã tồn tại, dùng update kết hợp với eq (tương đương where)
+          query = query.update(row).eq('brand_id', 1).eq('name', row.name);
+        } else {
+          // Nếu chưa tồn tại, dùng insert
+          query = query.insert(row);
+        }
+
+        const { data, error } = await query.select();
+
+        if (error) {
+          console.error(`Error ${isExisting ? 'updating' : 'inserting'} row ${row.name}:`, error.message);
+          continue;
+        }
+        if (data && data.length > 0) {
+          updatedRows.push(data[0]);
+        }
+      }
+    }
+
+    console.log(`[${new Date().toISOString()}] Successfully saved/updated ${updatedRows.length} price records to Supabase.`);
     return updatedRows;
   } catch (error) {
     console.error('Error in fetchAndSaveOrUpdatePrices:', error.message);
@@ -76,7 +110,7 @@ async function getLatestPrices() {
  */
 async function fetchAndSaveCryptoPrices() {
   try {
-    const response = await fetch(COINGECKO_API_URL);
+    const response = await fetch(COIN_MARKET_CAP_API_URL);
     if (!response.ok) {
       throw new Error(`CoinGecko API responded with status ${response.status}`);
     }
@@ -90,18 +124,8 @@ async function fetchAndSaveCryptoPrices() {
         sell_price: result.bitcoin.usd,
         price_change_percent: null,   // CoinGecko simple price API does not return % change
         unit_name: 'USD',
-        price_source: COINGECKO_API_URL,
-        brand_id: null,
-        updated_at: now
-      },
-      {
-        name: 'Ethereum (ETH)',
-        buy_price: result.ethereum.usd,
-        sell_price: result.ethereum.usd,
-        price_change_percent: null,
-        unit_name: 'USD',
-        price_source: COINGECKO_API_URL,
-        brand_id: null,
+        price_source: COIN_MARKET_CAP_API_URL,
+        brand_id: 2,
         updated_at: now
       }
     ];
