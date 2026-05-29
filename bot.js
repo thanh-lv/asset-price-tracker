@@ -171,9 +171,6 @@ setInterval(async () => {
 
     if (updatedRows?.length && prices && prices.length > 0) {
       const message = `
-⏰ Thời gian: ${new Date().toLocaleString("vi-VN", {
-        timeZone: "Asia/Ho_Chi_Minh",
-      })}
 🥇 ${prices[0].name}
 🔻 Mua vào: ${formatVND(prices[0].buy_price * 10)} VNĐ/lượng
 🔺 Bán ra:  ${formatVND(prices[0].sell_price * 10)} VNĐ/lượng
