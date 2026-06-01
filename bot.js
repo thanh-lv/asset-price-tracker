@@ -106,6 +106,16 @@ bot.start(async (ctx) => {
   ctx.reply("👋 Xin chào! Chào mừng đến với Asset Price Tracker Bot!");
 });
 
+bot.command("/remove", async (ctx) => {
+  const chatId = ctx.from.id;
+  const { data, error } = await supabase
+    .from("telegram_chats")
+    .delete()
+    .eq("telegram_chat_id", chatId);
+  if (error) console.error(error);
+  ctx.reply("👋 Đã xoá bạn khỏi danh sách nhận thông báo!");
+});
+
 // // /help
 // bot.help((ctx) => {
 //   ctx.reply(
