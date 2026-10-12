@@ -5,11 +5,9 @@ const PRICE_PAGE_URL = process.env.PHUQUY_PRICE_PAGE_URL || 'https://phuquygroup
 // Tên dòng bạc trên bảng giá -> tên đang lưu trong database
 const SILVER_ROW_PREFIX = 'Bạc thỏi Phú Quý 999';
 const SILVER_DB_NAME = 'Bạc PQ';
-const PHUQUY_BRAND_ID = 1;
 
 // Bảo Tín Mạnh Hải: API GraphQL công khai mà trang bang-gia-vang đang dùng
 const BTMH_API_URL = process.env.BTMH_API_URL || 'https://baotinmanhhai.vn/api/graphql';
-const BTMH_BRAND_ID = 2;
 // Mã sản phẩm vàng cần theo dõi (KGB = Kim Gia Bảo 24K), nhiều mã thì cách nhau bằng dấu phẩy
 const BTMH_RATE_CODES = (process.env.BTMH_RATE_CODES || 'KGB')
   .split(',').map(code => code.trim()).filter(Boolean);
@@ -60,15 +58,15 @@ function parseSilverPrice(html) {
 }
 
 /**
- * So sánh với giá đang lưu của một brand và chỉ insert/update những dòng
+ * So sánh với giá đang lưu (theo tên) và chỉ insert/update những dòng
  * mới hoặc có giá mua/bán thay đổi. Trả về các dòng đã được ghi.
  */
-async function saveChangedPrices(brandId, rowsToInsert) {
+async function saveChangedPrices(rowsToInsert) {
   // Lấy dữ liệu hiện tại từ database để so sánh
   const { data: existingPrices, error: fetchError } = await supabase
     .from('asset_prices')
     .select('name, buy_price, sell_price')
-    .eq('brand_id', brandId);
+    .in('name', rowsToInsert.map(row => row.name));
 
   if (fetchError) {
     console.warn('Could not fetch existing prices, will attempt to upsert all:', fetchError.message);
@@ -93,7 +91,7 @@ async function saveChangedPrices(brandId, rowsToInsert) {
       let query = supabase.from('asset_prices');
       if (isExisting) {
         // Nếu đã tồn tại, dùng update kết hợp với eq (tương đương where)
-        query = query.update(row).eq('brand_id', brandId).eq('name', row.name);
+        query = query.update(row).eq('name', row.name);
       } else {
         // Nếu chưa tồn tại, dùng insert
         query = query.insert(row);
@@ -133,11 +131,10 @@ async function fetchAndSaveOrUpdatePrices() {
       price_change_percent: null,   // bảng giá HTML không có % thay đổi
       unit_name: 'Chỉ',
       price_source: PRICE_PAGE_URL,
-      brand_id: PHUQUY_BRAND_ID,
       updated_at: new Date().toISOString()
     }];
 
-    const updatedRows = await saveChangedPrices(PHUQUY_BRAND_ID, rowsToInsert);
+    const updatedRows = await saveChangedPrices(rowsToInsert);
 
     console.log(`[${new Date().toISOString()}] Successfully saved/updated ${updatedRows.length} price records to Supabase.`);
     return updatedRows;
@@ -180,14 +177,13 @@ async function fetchAndSaveOrUpdateBtmhPrices() {
         price_change_percent: null,   // API chỉ trả mức thay đổi theo VNĐ, không có %
         unit_name: 'Chỉ',
         price_source: BTMH_API_URL,
-        brand_id: BTMH_BRAND_ID,
         updated_at: new Date().toISOString()
       }));
     if (rowsToInsert.length === 0) {
       throw new Error(`No prices returned for codes: ${BTMH_RATE_CODES.join(', ')}`);
     }
 
-    const updatedRows = await saveChangedPrices(BTMH_BRAND_ID, rowsToInsert);
+    const updatedRows = await saveChangedPrices(rowsToInsert);
 
     console.log(`[${new Date().toISOString()}] Successfully saved/updated ${updatedRows.length} BTMH price records to Supabase.`);
     return updatedRows;
@@ -238,7 +234,6 @@ async function fetchAndSaveCryptoPrices() {
         price_change_percent: null,   // CoinGecko simple price API does not return % change
         unit_name: 'USD',
         price_source: COIN_MARKET_CAP_API_URL,
-        brand_id: 2,
         updated_at: now
       }
     ];
