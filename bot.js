@@ -3,6 +3,7 @@ const express = require("express");
 const cors = require("cors");
 const {
   fetchAndSaveOrUpdatePrices,
+  fetchAndSaveOrUpdateBtmhPrices,
   getLatestPrices,
 } = require("./priceService");
 const { supabase } = require("./supabaseClient");
@@ -72,10 +73,7 @@ const bot = new Telegraf(BOT_TOKEN);
 // Helper: format VND
 function formatVND(amount) {
   if (amount === undefined || amount === null) return "N/A";
-  return new Intl.NumberFormat("vi-VN", {
-    style: "currency",
-    currency: "VND",
-  }).format(amount);
+  return `${new Intl.NumberFormat("vi-VN").format(amount)} VNĐ`;
 }
 
 // Helper: format USD
@@ -173,22 +171,43 @@ async function broadcastMessage(messageText) {
 }
 
 setInterval(async () => {
-  try {
-    console.log("Running scheduled background fetch...");
+  console.log("Running scheduled background fetch...");
 
+  // Bạc Phú Quý
+  try {
     const updatedRows = await fetchAndSaveOrUpdatePrices();
     const prices = await getLatestPrices();
 
     if (updatedRows?.length && prices && prices.length > 0) {
       const message = `
-🥇 ${prices[0].name}
-🔻 Mua vào: ${formatVND(prices[0].buy_price * 10)} VNĐ/lượng
-🔺 Bán ra:  ${formatVND(prices[0].sell_price * 10)} VNĐ/lượng
+🥈 ${prices[0].name}
+🔻 Mua vào: ${formatVND(prices[0].buy_price * 10)}/lượng
+🔺 Bán ra:  ${formatVND(prices[0].sell_price * 10)}/lượng
 `;
       await broadcastMessage(message);
     }
   } catch (error) {
     console.error("Scheduled background fetch failed:", error.message);
+  }
+
+  // Vàng Bảo Tín Mạnh Hải: mỗi nguồn có try/catch riêng để lỗi nguồn này không chặn nguồn kia
+  try {
+    const updatedRows = await fetchAndSaveOrUpdateBtmhPrices();
+
+    if (updatedRows?.length) {
+      const message = updatedRows
+        .map(
+          (row) => `
+🥇 BTMH - ${row.name}
+🔻 Mua vào: ${formatVND(row.buy_price * 10)}/lượng
+🔺 Bán ra:  ${formatVND(row.sell_price * 10)}/lượng
+`,
+        )
+        .join("");
+      await broadcastMessage(message);
+    }
+  } catch (error) {
+    console.error("Scheduled BTMH fetch failed:", error.message);
   }
 }, ONE_MINUTE);
 
