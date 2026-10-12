@@ -1,33 +1,71 @@
 const { supabase } = require('./supabaseClient');
 
-const API_URL = process.env.PHUQUY_API_URL || 'https://be.phuquy.com.vn/jewelry/product-payment-service/api/products/get-price';
+// Bảng giá công khai của Phú Quý (HTML). API cũ be.phuquy.com.vn đã bị Cloudflare chặn.
+const PRICE_PAGE_URL = process.env.PHUQUY_PRICE_PAGE_URL || 'https://phuquygroup.vn/';
+// Tên dòng bạc trên bảng giá -> tên đang lưu trong database
+const SILVER_ROW_PREFIX = 'Bạc thỏi Phú Quý 999';
+const SILVER_DB_NAME = 'Bạc PQ';
 const COIN_MARKET_CAP_API_URL = 'https://pro-api.coinmarketcap.com/v1/simple/price?ids=';
 
+// Giải mã HTML entity (vd: "Ph&#250; Qu&#253;" -> "Phú Quý") và bỏ thẻ HTML
+function cellText(html) {
+  return html
+    .replace(/<[^>]+>/g, '')
+    .replace(/&#x([0-9a-f]+);/gi, (_, hex) => String.fromCodePoint(parseInt(hex, 16)))
+    .replace(/&#(\d+);/g, (_, dec) => String.fromCodePoint(Number(dec)))
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+// "210,500" -> 210500
+function parsePrice(text) {
+  const digits = text.replace(/[^\d]/g, '');
+  return digits ? Number(digits) : null;
+}
+
 /**
- * Fetches the current gold and silver prices from the Phu Quy API
- * and inserts them into the Supabase database.
+ * Lấy giá bạc Phú Quý (VNĐ/chỉ) từ bảng giá HTML.
+ */
+function parseSilverPrice(html) {
+  const rows = html.match(/<tr[^>]*>[\s\S]*?<\/tr>/gi) || [];
+  for (const row of rows) {
+    const cells = (row.match(/<td[^>]*>[\s\S]*?<\/td>/gi) || []).map(cellText);
+    if (cells.length < 3 || !cells[0].startsWith(SILVER_ROW_PREFIX)) continue;
+
+    const buyPrice = parsePrice(cells[1]);
+    const sellPrice = parsePrice(cells[2]);
+    if (buyPrice === null || sellPrice === null) {
+      throw new Error(`Silver row found but prices are missing: ${cells.join(' | ')}`);
+    }
+    return { buyPrice, sellPrice };
+  }
+  throw new Error(`Silver row "${SILVER_ROW_PREFIX}" not found on ${PRICE_PAGE_URL}`);
+}
+
+/**
+ * Fetches the current silver price from the Phu Quy price board
+ * and inserts/updates it in the Supabase database.
  */
 async function fetchAndSaveOrUpdatePrices() {
   try {
-    const response = await fetch(API_URL);
+    const response = await fetch(PRICE_PAGE_URL);
     if (!response.ok) {
-      throw new Error(`Phu Quy API responded with status ${response.status}`);
+      throw new Error(`Phu Quy price page responded with status ${response.status}`);
     }
-    const result = await response.json();
-    if (result.errorCode !== "0" || !Array.isArray(result.data)) {
-      throw new Error(`Invalid API response format: ${result.message || 'Unknown error'}`);
-    }
+    const { buyPrice, sellPrice } = parseSilverPrice(await response.text());
 
-    const rowsToInsert = result.data.map(item => ({
-      name: (item.name || '').trim(),
-      buy_price: item.buyprice,
-      sell_price: item.sellprice,
-      price_change_percent: item.priceChangePercent,
-      unit_name: item.unit_name,
-      price_source: API_URL,
+    const rowsToInsert = [{
+      name: SILVER_DB_NAME,
+      buy_price: buyPrice,
+      sell_price: sellPrice,
+      price_change_percent: null,   // bảng giá HTML không có % thay đổi
+      unit_name: 'Chỉ',
+      price_source: PRICE_PAGE_URL,
       brand_id: 1,           // nullable FK - set later if brands table is populated
       updated_at: new Date().toISOString()
-    }));
+    }];
 
     // Lấy dữ liệu hiện tại từ database để so sánh
     const { data: existingPrices, error: fetchError } = await supabase
